@@ -116,39 +116,42 @@ Let's run:
 ```shell
 python3 -m venv venv
 source venv/bin/activate
-pip install kafka-python
+pip install kafka-python lz4
 python lastTimeConsumed.py
 ```
 
 You should get something like:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
-
-[notice] A new release of pip is available: 24.3.1 -> 25.3
-[notice] To update, run: pip install --upgrade pip
+Requirement already satisfied: kafka-python in ./venv/lib/python3.11/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.11/site-packages (4.4.5)
+WARNING: There was an error checking the latest version of pip.
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'schema-registry']
+Found 5 consumer groups: ['ConfluentTelemetryReporterSampler-731343422623467184', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-__consumer_offsets             2025-12-07 23:38:39.165000     No consumer group             
-__internal_confluent_only_broker_info 2025-12-07 23:36:58.698000     No consumer group             
+__consumer_offsets             2025-12-08 16:37:16.739000     No consumer group             
+__internal_confluent_only_broker_info 2025-12-08 16:35:45.491000     No consumer group             
 _confluent-alerts              No messages found              -                             
-_confluent-command             No messages found              -                             
+_confluent-command             2025-12-08 16:36:02.536000     _confluent-controlcenter-2-3-0-1-command
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No messages found              -                             
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No messages found              -                             
 _confluent-telemetry-metrics   No messages found              -                             
-_confluent_balancer_api_state  2025-12-07 23:37:59.650000     No consumer group             
-_schemas                       2025-12-07 23:38:39.873000     No consumer group             
-connect-configs                2025-12-07 23:38:39.153000     No consumer group             
-connect-offsets                2025-12-07 23:38:49.416000     No consumer group             
-connect-status                 2025-12-07 23:38:39.896000     No consumer group             
-customers                      2025-12-07 23:38:57.268000     No consumer group             
-orders                         2025-12-07 23:38:57.379000     No consumer group             
+_confluent_balancer_api_state  2025-12-08 16:36:46.781000     No consumer group             
+_schemas                       2025-12-08 16:37:17.644000     No consumer group             
+connect-configs                2025-12-08 16:37:16.721000     No consumer group             
+connect-offsets                2025-12-08 17:06:10.068000     No consumer group             
+connect-status                 2025-12-08 16:37:17.711000     No consumer group             
+customers                      2025-12-08 17:06:18.651000     No consumer group             
+orders                         2025-12-08 17:06:18.707000     No consumer group             
+
+==========================================================================================
+Warnings (1):
+1. Topic '_confluent-telemetry-metrics' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction.             
 ```
 
 ### Create Console Consumers
@@ -170,39 +173,42 @@ Now re-run the Python script to see the new consumer groups and their last consu
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install kafka-python
+pip install kafka-python lz4
 python lastTimeConsumed.py
 ```
 
 You should now see output similar to:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
-
-[notice] A new release of pip is available: 24.3.1 -> 25.3
-[notice] To update, run: pip install --upgrade pip
+Requirement already satisfied: kafka-python in ./venv/lib/python3.11/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.11/site-packages (4.4.5)
+WARNING: There was an error checking the latest version of pip.
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 7 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
+Found 7 consumer groups: ['ConfluentTelemetryReporterSampler-731343422623467184', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-__consumer_offsets             2025-12-07 23:40:14.919000     No consumer group             
-__internal_confluent_only_broker_info 2025-12-07 23:36:58.698000     No consumer group             
+__consumer_offsets             2025-12-08 17:06:49.763000     No consumer group             
+__internal_confluent_only_broker_info 2025-12-08 16:35:45.491000     No consumer group             
 _confluent-alerts              No messages found              -                             
-_confluent-command             No messages found              -                             
+_confluent-command             2025-12-08 16:36:02.536000     _confluent-controlcenter-2-3-0-1-command
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No messages found              -                             
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No messages found              -                             
 _confluent-telemetry-metrics   No messages found              -                             
-_confluent_balancer_api_state  2025-12-07 23:37:59.650000     No consumer group             
-_schemas                       2025-12-07 23:38:39.873000     No consumer group             
-connect-configs                2025-12-07 23:38:39.153000     No consumer group             
-connect-offsets                2025-12-07 23:40:09.514000     No consumer group             
-connect-status                 2025-12-07 23:38:39.896000     No consumer group             
-customers                      2025-12-07 23:40:14.699000     console-customers             
-orders                         2025-12-07 23:40:14.752000     console-orders                              
+_confluent_balancer_api_state  2025-12-08 16:36:46.781000     No consumer group             
+_schemas                       2025-12-08 16:37:17.644000     No consumer group             
+connect-configs                2025-12-08 16:37:16.721000     No consumer group             
+connect-offsets                2025-12-08 17:06:50.118000     No consumer group             
+connect-status                 2025-12-08 16:37:17.711000     No consumer group             
+customers                      2025-12-08 17:06:48.843000     console-customers             
+orders                         2025-12-08 17:06:49.646000     console-orders                
+
+==========================================================================================
+Warnings (1):
+1. Topic '_confluent-telemetry-metrics' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction.               
 ```
 
 The script will now display `console-customers` and `console-orders` as the consumer groups consuming these topics with their respective last consumption timestamps.
@@ -211,4 +217,6 @@ The script will now display `console-customers` and `console-orders` as the cons
 
 ```bash
 docker compose down -v
+rm -fr plugins
+rm -fr venv
 ```

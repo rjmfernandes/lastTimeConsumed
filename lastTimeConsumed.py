@@ -1,246 +1,234 @@
 #!/usr/bin/env python3
 
-from kafka import KafkaConsumer, KafkaAdminClient
-from kafka.structs import TopicPartition
+import argparse
+import sys
 from datetime import datetime
 
+from kafka import KafkaAdminClient, KafkaConsumer
+from kafka.errors import UnsupportedCodecError
+from kafka.structs import TopicPartition
 
-def get_topics(bootstrap_servers):
+# Force-enable LZ4 support if the library is available (helps when kafka-python mis-detects).
+HAS_LZ4 = False
+try:
+    import lz4.frame as _lz4_frame  # type: ignore
+    import kafka.codec as _kafka_codec  # type: ignore
+
+    _kafka_codec.lz4 = _lz4_frame
+    _kafka_codec.lz4_decode = _lz4_frame.decompress
+    _kafka_codec.has_lz4 = lambda: True
+    HAS_LZ4 = True
+except Exception:
+    HAS_LZ4 = False
+
+if not HAS_LZ4:
+    print(
+        "Warning: lz4 codec still not available to kafka-python. "
+        "Ensure `pip install lz4` in this venv and reinstall kafka-python if needed.",
+        file=sys.stderr,
+    )
+
+
+def get_topics(admin_client, include_internal=True):
     """Get all topics from the Kafka cluster."""
-    # For secure cluster connections, add these optional parameters:
-    # - security_protocol='SASL_SSL' or 'SSL' for encrypted connections
-    # - sasl_mechanism='PLAIN' or 'SCRAM-SHA-256' or 'SCRAM-SHA-512' for authentication
-    # - sasl_plain_username and sasl_plain_password for PLAIN authentication
-    # - sasl_plain_password for SCRAM authentication with username in sasl_plain_username
-    # - ssl_cafile='/path/to/ca-cert' for CA certificate verification
-    # - ssl_certfile='/path/to/client-cert' for client certificate
-    # - ssl_keyfile='/path/to/client-key' for client key
-    # - ssl_check_hostname=True to verify broker hostname matches certificate
-    admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
     topics = admin_client.list_topics()
-    admin_client.close()
-    return topics
+    if not include_internal:
+        topics = [t for t in topics if not t.startswith("_")]
+    return sorted(topics)
 
 
-def get_consumer_groups(bootstrap_servers):
+def normalize_consumer_groups(groups_result):
+    possible_groups = getattr(groups_result, "groups", groups_result)
+    return list(possible_groups or [])
+
+
+def extract_group_id(group_info):
+    return str(group_info[0]).strip()
+
+
+def get_consumer_groups(admin_client):
     """Get all consumer groups from the Kafka cluster."""
-    # For secure cluster connections, add these optional parameters:
-    # - security_protocol='SASL_SSL' or 'SSL' for encrypted connections
-    # - sasl_mechanism='PLAIN' or 'SCRAM-SHA-256' or 'SCRAM-SHA-512' for authentication
-    # - sasl_plain_username and sasl_plain_password for PLAIN authentication
-    # - ssl_cafile='/path/to/ca-cert' for CA certificate verification
-    # - ssl_certfile='/path/to/client-cert' for client certificate
-    # - ssl_keyfile='/path/to/client-key' for client key
-    # - ssl_check_hostname=True to verify broker hostname matches certificate
-    admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
     consumer_groups = []
-
     try:
         groups_result = admin_client.list_consumer_groups()
+        for group_info in normalize_consumer_groups(groups_result):
+            group_id = extract_group_id(group_info)
+            if group_id:
+                consumer_groups.append(group_id)
+    except Exception as exc:
+        print(f"Warning: failed to list consumer groups: {exc}", file=sys.stderr)
 
-        # kafka-python can return slightly different shapes depending on version:
-        # - ListConsumerGroupsResult with .groups attribute
-        # - tuple ([ConsumerGroupListing...], errors)
-        # - dict with "groups"
-        possible_groups = []
-
-        if hasattr(groups_result, "groups"):
-            possible_groups = getattr(groups_result, "groups")
-        elif isinstance(groups_result, tuple) and len(groups_result) > 0:
-            possible_groups = groups_result[0]
-        elif isinstance(groups_result, dict):
-            possible_groups = groups_result.get("groups", [])
-        elif groups_result:
-            possible_groups = groups_result
-
-        for group_info in possible_groups:
-            if isinstance(group_info, tuple) and group_info:
-                group_id = group_info[0]
-            elif hasattr(group_info, "group_id"):
-                group_id = group_info.group_id
-            elif hasattr(group_info, "groupId"):
-                group_id = group_info.groupId
-            elif hasattr(group_info, "id"):
-                group_id = group_info.id
-            else:
-                group_id = str(group_info)
-
-            if group_id and str(group_id).strip():
-                consumer_groups.append(str(group_id).strip())
-    except Exception:
-        pass
-    finally:
-        admin_client.close()
-
-    # Remove duplicates and sort
     return sorted(list(set(consumer_groups)))
 
 
-def get_last_consumption_time_and_group(bootstrap_servers, topic, consumer_groups):
+WARNINGS = []
+
+
+def fetch_timestamp_for_offset(consumer, tp, offset):
+    """Return datetime for the message at the given offset (offset must exist)."""
+    
+    # Try the target offset and a few before it in case of corruption/failure
+    max_retries = 3 
+    
+    for retry in range(max_retries):
+        current_offset = offset - retry
+        if current_offset < 0:
+            break
+            
+        consumer.assign([tp])
+        consumer.seek(tp, current_offset)
+        
+        try:
+            # Poll for the message instead of using next() for better reliability
+            msg_map = consumer.poll(timeout_ms=1000, max_records=1)
+            msg = msg_map.get(tp, [None])[0]
+            
+            if msg and msg.timestamp is not None:
+                return datetime.fromtimestamp(msg.timestamp / 1000)
+            
+        except UnsupportedCodecError:
+            # Accumulate error for later display
+            # We keep this warning minimal as we know the codec is likely the issue
+            warning_msg = f"Topic '{tp.topic}' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction."
+            if warning_msg not in WARNINGS:
+                WARNINGS.append(warning_msg)
+            return None # Fail immediately on codec error
+        
+        except Exception as exc:
+            # Log specific message corruption/read errors, then try the next preceding offset
+            warning_msg = f"Failed to fetch message for {tp} offset {current_offset}: {exc}. Trying previous offset..."
+            if warning_msg not in WARNINGS:
+                # Add to warnings only the first time for a given offset
+                # (This is a simplified way to log the attempt)
+                pass 
+            continue # Try the next loop iteration (previous offset)
+            
+    # If all retries fail, return None
+    return None
+
+
+def get_last_consumption_time_and_group(admin_client, consumer, topic, consumer_groups):
     """Get the last consumption time and consumer group for a topic."""
-    # For secure cluster connections, add these optional parameters:
-    # - security_protocol='SASL_SSL' or 'SSL' for encrypted connections
-    # - sasl_mechanism='PLAIN' or 'SCRAM-SHA-256' or 'SCRAM-SHA-512' for authentication
-    # - sasl_plain_username and sasl_plain_password for PLAIN authentication
-    # - ssl_cafile='/path/to/ca-cert' for CA certificate verification
-    # - ssl_certfile='/path/to/client-cert' for client certificate
-    # - ssl_keyfile='/path/to/client-key' for client key
-    # - ssl_check_hostname=True to verify broker hostname matches certificate
-
     last_consumption = None
-    admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
 
-    # Check consumer group offsets
     for group in consumer_groups:
         try:
             group_offsets = admin_client.list_consumer_group_offsets(group)
-            group_last_times = []
+        except Exception as exc:
+            warning_msg = f"Failed to fetch offsets for group {group}: {exc}"
+            if warning_msg not in WARNINGS:
+                WARNINGS.append(warning_msg)
+            continue
 
-            # Check if this group has offsets for this topic
-            for tp, offset_data in group_offsets.items():
-                if tp.topic != topic:
-                    continue
+        group_last_times = []
+        for tp, offset_data in group_offsets.items():
+            if tp.topic != topic:
+                continue
+            if offset_data.offset is None or offset_data.offset <= 0:
+                continue
 
-                # offset is "next offset to read", so last consumed is offset - 1
-                if offset_data.offset is not None and offset_data.offset > 0:
-                    # Found an offset, now get the message timestamp
-                    # For secure cluster connections, add these optional parameters:
-                    # - security_protocol='SASL_SSL' or 'SSL' for encrypted connections
-                    # - sasl_mechanism='PLAIN' or 'SCRAM-SHA-256' or 'SCRAM-SHA-512' for authentication
-                    # - sasl_plain_username and sasl_plain_password for PLAIN authentication
-                    # - ssl_cafile='/path/to/ca-cert' for CA certificate verification
-                    # - ssl_certfile='/path/to/client-cert' for client certificate
-                    # - ssl_keyfile='/path/to/client-key' for client key
-                    # - ssl_check_hostname=True to verify broker hostname matches certificate
-                    try:
-                        consumer = KafkaConsumer(
-                            bootstrap_servers=bootstrap_servers,
-                            group_id=group,
-                            auto_offset_reset="earliest",
-                            enable_auto_commit=False,
-                        )
-                        consumer.assign([tp])
-                        consumer.seek(tp, offset_data.offset - 1)
-                        try:
-                            msg = next(consumer)
-                            timestamp = msg.timestamp
-                            group_last_times.append(
-                                (
-                                    datetime.fromtimestamp(timestamp / 1000),
-                                    group,
-                                )
-                            )
-                        except StopIteration:
-                            pass
-                        finally:
-                            consumer.close()
-                    except Exception:
-                        pass
+            ts = fetch_timestamp_for_offset(consumer, tp, offset_data.offset - 1)
+            if ts:
+                group_last_times.append((ts, group))
 
-            if group_last_times:
-                latest = max(group_last_times, key=lambda x: x[0])
-                if last_consumption is None or latest[0] > last_consumption[0]:
-                    last_consumption = latest
-
-        except Exception:
-            pass
-
-    admin_client.close()
+        if group_last_times:
+            latest = max(group_last_times, key=lambda x: x[0])
+            if last_consumption is None or latest[0] > last_consumption[0]:
+                last_consumption = latest
 
     # If no consumer group has committed offsets, show the last message in the topic with no group attribution
     if last_consumption is None:
-        try:
-            # For secure cluster connections, add these optional parameters:
-            # - security_protocol='SASL_SSL' or 'SSL' for encrypted connections
-            # - sasl_mechanism='PLAIN' or 'SCRAM-SHA-256' or 'SCRAM-SHA-512' for authentication
-            # - sasl_plain_username and sasl_plain_password for PLAIN authentication
-            # - ssl_cafile='/path/to/ca-cert' for CA certificate verification
-            # - ssl_certfile='/path/to/client-cert' for client certificate
-            # - ssl_keyfile='/path/to/client-key' for client key
-            # - ssl_check_hostname=True to verify broker hostname matches certificate
-            consumer = KafkaConsumer(
-                bootstrap_servers=bootstrap_servers,
-                group_id="temp-group-" + str(datetime.now().timestamp()),
-                auto_offset_reset="earliest",
-                enable_auto_commit=False,
-            )
+        partitions = consumer.partitions_for_topic(topic)
+        if partitions:
+            last_times = []
+            for partition in partitions:
+                tp = TopicPartition(topic, partition)
+                try:
+                    end_offset = consumer.end_offsets([tp]).get(tp, 0)
+                except Exception as exc:
+                    warning_msg = f"Failed to fetch end offset for {tp}: {exc}"
+                    if warning_msg not in WARNINGS:
+                        WARNINGS.append(warning_msg)
+                    continue
 
-            partitions = consumer.partitions_for_topic(topic)
-            if partitions:
-                last_times = []
-                for partition in partitions:
-                    tp = TopicPartition(topic, partition)
-                    consumer.assign([tp])
-                    consumer.seek_to_end(tp)
-                    last_offset = consumer.position(tp)
+                if end_offset > 0:
+                    ts = fetch_timestamp_for_offset(consumer, tp, end_offset - 1)
+                    if ts:
+                        last_times.append(ts)
 
-                    if last_offset > 0:
-                        consumer.seek(tp, last_offset - 1)
-                        try:
-                            msg = next(consumer)
-                            timestamp = msg.timestamp
-                            last_times.append(datetime.fromtimestamp(timestamp / 1000))
-                        except StopIteration:
-                            pass
-
-                if last_times:
-                    last_consumption = (max(last_times), "No consumer group")
-
-            consumer.close()
-
-        except Exception:
-            pass
+            if last_times:
+                last_consumption = (max(last_times), "No consumer group")
 
     if last_consumption:
         return last_consumption
     return None, None
 
 
-def main():
-    # Kafka cluster connection settings
-    bootstrap_servers = "localhost:9091"
+def build_arg_parser():
+    parser = argparse.ArgumentParser(
+        description="List last consumed time per Kafka topic."
+    )
+    parser.add_argument(
+        "--bootstrap-servers",
+        default="localhost:9091",
+        help="Kafka bootstrap servers (default: localhost:9091)",
+    )
+    parser.add_argument(
+        "--hide-internal",
+        action="store_true",
+        help="Hide internal topics (those starting with underscore).",
+    )
+    return parser
 
-    # If your Kafka cluster requires security/authentication, uncomment and configure:
-    # Example for SASL_SSL with PLAIN authentication:
-    # bootstrap_servers = "kafka-broker:9092"
-    # security_protocol = "SASL_SSL"
-    # sasl_mechanism = "PLAIN"
-    # sasl_plain_username = "your-username"
-    # sasl_plain_password = "your-password"
-    # ssl_cafile = "/path/to/ca-cert.pem"
-    #
-    # Example for SSL with client certificates:
-    # security_protocol = "SSL"
-    # ssl_cafile = "/path/to/ca-cert.pem"
-    # ssl_certfile = "/path/to/client-cert.pem"
-    # ssl_keyfile = "/path/to/client-key.pem"
-    # ssl_check_hostname = True
-    #
-    # Then pass these parameters to KafkaConsumer and KafkaAdminClient calls
+
+def main():
+    args = build_arg_parser().parse_args()
+
+    kafka_kwargs = {
+        "bootstrap_servers": args.bootstrap_servers,
+        # To enable security, add here:
+        # "security_protocol": "SASL_SSL",
+        # "sasl_mechanism": "PLAIN",
+        # "sasl_plain_username": "...",
+        # "sasl_plain_password": "...",
+        # "ssl_cafile": "/path/to/ca-cert.pem",
+        # etc.
+    }
+
+    admin_client = KafkaAdminClient(**kafka_kwargs)
+    consumer = KafkaConsumer(
+        **kafka_kwargs,
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+    )
 
     print("Fetching topics from Kafka cluster...")
-    topics = get_topics(bootstrap_servers)
+    topics = get_topics(admin_client, include_internal=not args.hide_internal)
+    print(f"\nFound {len(topics)} topics")
 
-    # Include all topics (both user and internal/system topics)
-    all_topics = sorted(topics)
-
-    print(f"\nFound {len(all_topics)} topics")
-
-    # Fetch consumer groups once
     print("Fetching consumer groups...")
-    consumer_groups = get_consumer_groups(bootstrap_servers)
+    consumer_groups = get_consumer_groups(admin_client)
     print(f"Found {len(consumer_groups)} consumer groups: {consumer_groups}\n")
     print(f"{'Topic':<30} {'Last Consumed':<30} {'Consumer Group':<30}")
     print("-" * 90)
 
-    for topic in all_topics:
+    for topic in topics:
         last_time, group = get_last_consumption_time_and_group(
-            bootstrap_servers, topic, consumer_groups
+            admin_client, consumer, topic, consumer_groups
         )
         if last_time:
             print(f"{topic:<30} {str(last_time):<30} {group:<30}")
         else:
             print(f"{topic:<30} {'No messages found':<30} {'-':<30}")
+
+    consumer.close()
+    admin_client.close()
+
+    if WARNINGS:
+        print("\n" + "=" * 90, file=sys.stderr)
+        print(f"Warnings ({len(WARNINGS)}):", file=sys.stderr)
+        for i, warning in enumerate(WARNINGS, 1):
+            print(f"{i}. {warning}", file=sys.stderr)
 
 
 if __name__ == "__main__":

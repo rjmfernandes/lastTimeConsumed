@@ -23,8 +23,7 @@ except Exception:
 
 if not HAS_LZ4:
     print(
-        "Warning: lz4 codec still not available to kafka-python. "
-        "Ensure `pip install lz4` in this venv and reinstall kafka-python if needed.",
+        "Warning: Could not enable LZ4 support (likely missing lz4 library).",
         file=sys.stderr,
     )
 

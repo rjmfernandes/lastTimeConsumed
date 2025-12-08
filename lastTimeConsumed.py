@@ -65,43 +65,43 @@ WARNINGS = []
 
 def fetch_timestamp_for_offset(consumer, tp, offset):
     """Return datetime for the message at the given offset (offset must exist)."""
-    
+
     # Try the target offset and a few before it in case of corruption/failure
-    max_retries = 3 
-    
+    max_retries = 3
+
     for retry in range(max_retries):
         current_offset = offset - retry
         if current_offset < 0:
             break
-            
+
         consumer.assign([tp])
         consumer.seek(tp, current_offset)
-        
+
         try:
             # Poll for the message instead of using next() for better reliability
             msg_map = consumer.poll(timeout_ms=1000, max_records=1)
             msg = msg_map.get(tp, [None])[0]
-            
+
             if msg and msg.timestamp is not None:
                 return datetime.fromtimestamp(msg.timestamp / 1000)
-            
+
         except UnsupportedCodecError:
             # Accumulate error for later display
             # We keep this warning minimal as we know the codec is likely the issue
             warning_msg = f"Topic '{tp.topic}' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction."
             if warning_msg not in WARNINGS:
                 WARNINGS.append(warning_msg)
-            return None # Fail immediately on codec error
-        
+            return None  # Fail immediately on codec error
+
         except Exception as exc:
             # Log specific message corruption/read errors, then try the next preceding offset
             warning_msg = f"Failed to fetch message for {tp} offset {current_offset}: {exc}. Trying previous offset..."
             if warning_msg not in WARNINGS:
                 # Add to warnings only the first time for a given offset
                 # (This is a simplified way to log the attempt)
-                pass 
-            continue # Try the next loop iteration (previous offset)
-            
+                pass
+            continue  # Try the next loop iteration (previous offset)
+
     # If all retries fail, return None
     return None
 
@@ -135,32 +135,7 @@ def get_last_consumption_time_and_group(admin_client, consumer, topic, consumer_
             if last_consumption is None or latest[0] > last_consumption[0]:
                 last_consumption = latest
 
-    # If no consumer group has committed offsets, show the last message in the topic with no group attribution
-    if last_consumption is None:
-        partitions = consumer.partitions_for_topic(topic)
-        if partitions:
-            last_times = []
-            for partition in partitions:
-                tp = TopicPartition(topic, partition)
-                try:
-                    end_offset = consumer.end_offsets([tp]).get(tp, 0)
-                except Exception as exc:
-                    warning_msg = f"Failed to fetch end offset for {tp}: {exc}"
-                    if warning_msg not in WARNINGS:
-                        WARNINGS.append(warning_msg)
-                    continue
-
-                if end_offset > 0:
-                    ts = fetch_timestamp_for_offset(consumer, tp, end_offset - 1)
-                    if ts:
-                        last_times.append(ts)
-
-            if last_times:
-                last_consumption = (max(last_times), "No consumer group")
-
-    if last_consumption:
-        return last_consumption
-    return None, None
+    return last_consumption if last_consumption else (None, None)
 
 
 def build_arg_parser():
@@ -218,7 +193,7 @@ def main():
         if last_time:
             print(f"{topic:<30} {str(last_time):<30} {group:<30}")
         else:
-            print(f"{topic:<30} {'No messages found':<30} {'-':<30}")
+            print(f"{topic:<30} {'No consumer offset found':<30} {'-':<30}")
 
     consumer.close()
     admin_client.close()

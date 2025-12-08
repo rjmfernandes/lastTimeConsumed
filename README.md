@@ -123,35 +123,33 @@ python lastTimeConsumed.py
 You should get something like:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.11/site-packages (2.3.0)
-Requirement already satisfied: lz4 in ./venv/lib/python3.11/site-packages (4.4.5)
-WARNING: There was an error checking the latest version of pip.
+Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.13/site-packages (4.4.5)
+
+[notice] A new release of pip is available: 24.3.1 -> 25.3
+[notice] To update, run: pip install --upgrade pip
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 5 consumer groups: ['ConfluentTelemetryReporterSampler-731343422623467184', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'schema-registry']
+Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-__consumer_offsets             2025-12-08 16:37:16.739000     No consumer group             
-__internal_confluent_only_broker_info 2025-12-08 16:35:45.491000     No consumer group             
-_confluent-alerts              No messages found              -                             
-_confluent-command             2025-12-08 16:36:02.536000     _confluent-controlcenter-2-3-0-1-command
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No messages found              -                             
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No messages found              -                             
-_confluent-telemetry-metrics   No messages found              -                             
-_confluent_balancer_api_state  2025-12-08 16:36:46.781000     No consumer group             
-_schemas                       2025-12-08 16:37:17.644000     No consumer group             
-connect-configs                2025-12-08 16:37:16.721000     No consumer group             
-connect-offsets                2025-12-08 17:06:10.068000     No consumer group             
-connect-status                 2025-12-08 16:37:17.711000     No consumer group             
-customers                      2025-12-08 17:06:18.651000     No consumer group             
-orders                         2025-12-08 17:06:18.707000     No consumer group             
-
-==========================================================================================
-Warnings (1):
-1. Topic '_confluent-telemetry-metrics' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction.             
+__consumer_offsets             No consumer offset found       -                             
+__internal_confluent_only_broker_info No consumer offset found       -                             
+_confluent-alerts              No consumer offset found       -                             
+_confluent-command             2025-12-08 17:21:57.631000     _confluent-controlcenter-2-3-0-1-command
+_confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No consumer offset found       -                             
+_confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No consumer offset found       -                             
+_confluent-telemetry-metrics   No consumer offset found       -                             
+_confluent_balancer_api_state  No consumer offset found       -                             
+_schemas                       No consumer offset found       -                             
+connect-configs                No consumer offset found       -                             
+connect-offsets                No consumer offset found       -                             
+connect-status                 No consumer offset found       -                             
+customers                      No consumer offset found       -                             
+orders                         No consumer offset found       -                                        
 ```
 
 ### Create Console Consumers
@@ -180,35 +178,33 @@ python lastTimeConsumed.py
 You should now see output similar to:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.11/site-packages (2.3.0)
-Requirement already satisfied: lz4 in ./venv/lib/python3.11/site-packages (4.4.5)
-WARNING: There was an error checking the latest version of pip.
+Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.13/site-packages (4.4.5)
+
+[notice] A new release of pip is available: 24.3.1 -> 25.3
+[notice] To update, run: pip install --upgrade pip
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 7 consumer groups: ['ConfluentTelemetryReporterSampler-731343422623467184', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
+Found 7 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-__consumer_offsets             2025-12-08 17:06:49.763000     No consumer group             
-__internal_confluent_only_broker_info 2025-12-08 16:35:45.491000     No consumer group             
-_confluent-alerts              No messages found              -                             
-_confluent-command             2025-12-08 16:36:02.536000     _confluent-controlcenter-2-3-0-1-command
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No messages found              -                             
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No messages found              -                             
-_confluent-telemetry-metrics   No messages found              -                             
-_confluent_balancer_api_state  2025-12-08 16:36:46.781000     No consumer group             
-_schemas                       2025-12-08 16:37:17.644000     No consumer group             
-connect-configs                2025-12-08 16:37:16.721000     No consumer group             
-connect-offsets                2025-12-08 17:06:50.118000     No consumer group             
-connect-status                 2025-12-08 16:37:17.711000     No consumer group             
-customers                      2025-12-08 17:06:48.843000     console-customers             
-orders                         2025-12-08 17:06:49.646000     console-orders                
-
-==========================================================================================
-Warnings (1):
-1. Topic '_confluent-telemetry-metrics' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction.               
+__consumer_offsets             No consumer offset found       -                             
+__internal_confluent_only_broker_info No consumer offset found       -                             
+_confluent-alerts              No consumer offset found       -                             
+_confluent-command             2025-12-08 17:21:57.631000     _confluent-controlcenter-2-3-0-1-command
+_confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No consumer offset found       -                             
+_confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No consumer offset found       -                             
+_confluent-telemetry-metrics   No consumer offset found       -                             
+_confluent_balancer_api_state  No consumer offset found       -                             
+_schemas                       No consumer offset found       -                             
+connect-configs                No consumer offset found       -                             
+connect-offsets                No consumer offset found       -                             
+connect-status                 No consumer offset found       -                             
+customers                      2025-12-08 17:28:52.258000     console-customers             
+orders                         2025-12-08 17:28:54.659000     console-orders                            
 ```
 
 The script will now display `console-customers` and `console-orders` as the consumer groups consuming these topics with their respective last consumption timestamps.

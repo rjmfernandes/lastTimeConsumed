@@ -158,12 +158,12 @@ You can create console consumers for the `customers` and `orders` topics to trac
 
 **Terminal 1 - Consume from customers topic:**
 ```bash
-kafka-console-consumer --bootstrap-server localhost:9091 --topic customers --from-beginning --group console-customers
+kafka-avro-console-consumer --bootstrap-server localhost:9091 --topic customers --from-beginning --group console-customers --property schema.registry.url=http://localhost:8081
 ```
 
 **Terminal 2 - Consume from orders topic:**
 ```bash
-kafka-console-consumer --bootstrap-server localhost:9091 --topic orders --from-beginning --group console-orders
+kafka-avro-console-consumer --bootstrap-server localhost:9091 --topic orders --from-beginning --group console-orders --property schema.registry.url=http://localhost:8081
 ```
 
 Now re-run the Python script to see the new consumer groups and their last consumption times:

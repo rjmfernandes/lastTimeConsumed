@@ -8,6 +8,16 @@ from kafka import KafkaAdminClient, KafkaConsumer
 from kafka.errors import UnsupportedCodecError
 from kafka.structs import TopicPartition
 
+
+WARNINGS = []
+
+
+def record_warning(message):
+    """Add a warning once and return it."""
+    if message not in WARNINGS:
+        WARNINGS.append(message)
+    return message
+
 # Force-enable LZ4 support if the library is available (helps when kafka-python mis-detects).
 HAS_LZ4 = False
 try:
@@ -26,6 +36,7 @@ if not HAS_LZ4:
         "Warning: Could not enable LZ4 support (likely missing lz4 library).",
         file=sys.stderr,
     )
+    record_warning("Could not enable LZ4 support (likely missing lz4 library).")
 
 
 def get_topics(admin_client, include_internal=True):
@@ -56,16 +67,13 @@ def get_consumer_groups(admin_client):
                 consumer_groups.append(group_id)
     except Exception as exc:
         print(f"Warning: failed to list consumer groups: {exc}", file=sys.stderr)
+        record_warning(f"Failed to list consumer groups: {exc}")
 
     return sorted(list(set(consumer_groups)))
 
 
-WARNINGS = []
-
-
 def fetch_timestamp_for_offset(consumer, tp, offset):
     """Return datetime for the message at the given offset (offset must exist)."""
-
     # Try the target offset and a few before it in case of corruption/failure
     max_retries = 3
 
@@ -84,25 +92,29 @@ def fetch_timestamp_for_offset(consumer, tp, offset):
 
             if msg and msg.timestamp is not None:
                 return datetime.fromtimestamp(msg.timestamp / 1000)
+            else:
+                warning_msg = f"Could not fetch message/timestamp for {tp.topic} partition {tp.partition} at offset {current_offset}"
+                record_warning(warning_msg)
+                continue
 
-        except UnsupportedCodecError:
-            # Accumulate error for later display
-            # We keep this warning minimal as we know the codec is likely the issue
-            warning_msg = f"Topic '{tp.topic}' uses LZ4 compression which couldn't be decoded. Skipping timestamp extraction."
-            if warning_msg not in WARNINGS:
-                WARNINGS.append(warning_msg)
+        except UnsupportedCodecError as exc:
+            # Accumulate error for later display and surface the codec error details
+            warning_msg = (
+                f"Topic '{tp.topic}' uses a compression codec that couldn't be decoded ({exc}). "
+                "Install the matching codec (e.g., lz4, snappy) and retry. Skipping timestamp extraction."
+            )
+            record_warning(warning_msg)
             return None  # Fail immediately on codec error
 
         except Exception as exc:
             # Log specific message corruption/read errors, then try the next preceding offset
             warning_msg = f"Failed to fetch message for {tp} offset {current_offset}: {exc}. Trying previous offset..."
-            if warning_msg not in WARNINGS:
-                # Add to warnings only the first time for a given offset
-                # (This is a simplified way to log the attempt)
-                pass
+            record_warning(warning_msg)
             continue  # Try the next loop iteration (previous offset)
 
-    # If all retries fail, return None
+    # If all retries fail, record a warning and return None
+    warning_msg = f"Could not find message/timestamp for {tp.topic} partition {tp.partition} at offset {offset}"
+    record_warning(warning_msg)
     return None
 
 
@@ -115,8 +127,7 @@ def get_last_consumption_time_and_group(admin_client, consumer, topic, consumer_
             group_offsets = admin_client.list_consumer_group_offsets(group)
         except Exception as exc:
             warning_msg = f"Failed to fetch offsets for group {group}: {exc}"
-            if warning_msg not in WARNINGS:
-                WARNINGS.append(warning_msg)
+            record_warning(warning_msg)
             continue
 
         group_last_times = []

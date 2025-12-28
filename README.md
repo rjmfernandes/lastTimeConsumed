@@ -112,12 +112,18 @@ Open http://localhost:9021 and check cluster is healthy including Kafka Connect.
 
 ## Our Script
 
+Make sure to install snappy:
+
+```shell
+brew install snappy
+```
+
 Let's run:
 
 ```shell
 python3 -m venv venv
 source venv/bin/activate
-pip install kafka-python lz4
+pip install kafka-python lz4 python-snappy
 python lastTimeConsumed.py 
 ```
 
@@ -136,11 +142,13 @@ You should get something like:
 ```
 Requirement already satisfied: kafka-python in ./venv/lib/python3.14/site-packages (2.3.0)
 Requirement already satisfied: lz4 in ./venv/lib/python3.14/site-packages (4.4.5)
+Requirement already satisfied: python-snappy in ./venv/lib/python3.14/site-packages (0.7.3)
+Requirement already satisfied: cramjam in ./venv/lib/python3.14/site-packages (from python-snappy) (2.11.0)
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
+Found 3 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', 'connect-group', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
@@ -156,8 +164,8 @@ _schemas                       No consumer offset found       -
 connect-configs                No consumer offset found       -                             
 connect-offsets                No consumer offset found       -                             
 connect-status                 No consumer offset found       -                             
-customers                      No consumer offset found       -                            
-orders                         No consumer offset found       -                            
+customers                      No consumer offset found       -                             
+orders                         No consumer offset found       -                             
 ```
 
 ### Create Console Consumers
@@ -179,7 +187,7 @@ Now re-run the Python script to see the new consumer groups and their last consu
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install kafka-python lz4
+pip install kafka-python lz4 python-snappy
 python lastTimeConsumed.py --hide-internal
 ```
 
@@ -188,6 +196,8 @@ You should now see output similar to:
 ```
 Requirement already satisfied: kafka-python in ./venv/lib/python3.14/site-packages (2.3.0)
 Requirement already satisfied: lz4 in ./venv/lib/python3.14/site-packages (4.4.5)
+Requirement already satisfied: python-snappy in ./venv/lib/python3.14/site-packages (0.7.3)
+Requirement already satisfied: cramjam in ./venv/lib/python3.14/site-packages (from python-snappy) (2.11.0)
 Fetching topics from Kafka cluster...
 
 Found 2 topics
@@ -196,8 +206,8 @@ Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--896453050709150604
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-customers                      2025-12-28 16:34:39.095000     console-customers             
-orders                         2025-12-28 16:34:36.492000     console-orders                
+customers                      2025-12-28 17:33:57.042000     console-customers             
+orders                         2025-12-28 17:33:57.191000     console-orders                
 ```
 
 The script will now display `console-customers` and `console-orders` as the consumer groups consuming these topics with their respective last consumption timestamps.

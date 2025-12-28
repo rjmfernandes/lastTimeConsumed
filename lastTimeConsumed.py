@@ -43,6 +43,25 @@ if not HAS_LZ4:
     )
     record_warning("Could not enable LZ4 support (likely missing lz4 library).")
 
+try:
+    import snappy as _snappy  # python-snappy
+    import kafka.codec as _kafka_codec  # type: ignore
+
+    _kafka_codec.snappy = _snappy
+    _kafka_codec.snappy_decode = _snappy.decompress
+    _kafka_codec.has_snappy = lambda: True
+    HAS_SNAPPY = True
+except Exception:
+    HAS_SNAPPY = False
+
+if not HAS_SNAPPY:
+    print(
+        "Warning: Could not enable Snappy support (likely missing python-snappy library).",
+        file=sys.stderr,
+    )
+    record_warning(
+        "Could not enable Snappy support (likely missing python-snappy library)."
+    )
 
 def get_topics(admin_client, include_internal=True):
     """Get all topics from the Kafka cluster."""

@@ -4,8 +4,8 @@ import argparse
 import sys
 from datetime import datetime
 
-from kafka import KafkaAdminClient, KafkaConsumer
-from kafka.errors import UnsupportedCodecError
+from kafka import KafkaAdminClient, KafkaConsumer  # type: ignore
+from kafka.errors import UnsupportedCodecError  # type: ignore
 
 
 WARNINGS = []
@@ -137,6 +137,59 @@ def fetch_timestamp_for_offset(consumer, tp, offset):
     return None
 
 
+def compute_last_consumption_for_topics(
+    admin_client, consumer, topics, consumer_groups
+):
+    """Compute last consumption timestamp and group for each topic efficiently.
+
+    Strategy:
+    - Iterate each consumer group once and call `list_consumer_group_offsets(group)`
+      a single time per group.
+    - For each TopicPartition offset encountered, fetch the message timestamp
+      only once and cache it. This avoids repeating the same seek/poll for the
+      same (topic, partition, offset) combination when multiple topics/groups
+      reference the same partition offsets.
+    - Build a mapping: topic -> (latest_timestamp, consumer_group)
+    """
+    # Prepare results map with None default
+    results = {t: (None, None) for t in topics}
+
+    # Cache timestamps for (topic, partition, offset)
+    timestamp_cache = {}
+
+    for group in consumer_groups:
+        try:
+            group_offsets = admin_client.list_consumer_group_offsets(group)
+        except Exception as exc:
+            warning_msg = f"Failed to fetch offsets for group {group}: {exc}"
+            record_warning(warning_msg)
+            continue
+
+        for tp, offset_data in group_offsets.items():
+            if tp.topic not in results:
+                continue
+            if offset_data.offset is None or offset_data.offset <= 0:
+                continue
+
+            target_offset = offset_data.offset - 1
+            cache_key = (tp.topic, tp.partition, target_offset)
+
+            if cache_key in timestamp_cache:
+                ts = timestamp_cache[cache_key]
+            else:
+                ts = fetch_timestamp_for_offset(consumer, tp, target_offset)
+                timestamp_cache[cache_key] = ts
+
+            if not ts:
+                continue
+
+            current_ts, current_group = results[tp.topic]
+            if current_ts is None or ts > current_ts:
+                results[tp.topic] = (ts, group)
+
+    return results
+
+
 def get_last_consumption_time_and_group(admin_client, consumer, topic, consumer_groups):
     """Get the last consumption time and consumer group for a topic."""
     last_consumption = None
@@ -216,10 +269,13 @@ def main():
     print(f"{'Topic':<30} {'Last Consumed':<30} {'Consumer Group':<30}")
     print("-" * 90)
 
+    # Compute last consumption for all topics in a single efficient pass
+    topic_last_map = compute_last_consumption_for_topics(
+        admin_client, consumer, topics, consumer_groups
+    )
+
     for topic in topics:
-        last_time, group = get_last_consumption_time_and_group(
-            admin_client, consumer, topic, consumer_groups
-        )
+        last_time, group = topic_last_map.get(topic, (None, None))
         if last_time:
             print(f"{topic:<30} {str(last_time):<30} {group:<30}")
         else:

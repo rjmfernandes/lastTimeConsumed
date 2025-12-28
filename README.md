@@ -11,6 +11,7 @@ An example on fetching the last time each topic in a kafka cluster was consumed.
     - [Create Connectors](#create-connectors)
     - [Check Control Center](#check-control-center)
   - [Our Script](#our-script)
+  - [Configuration note](#configuration-note)
     - [Create Console Consumers](#create-console-consumers)
   - [Cleanup](#cleanup)
 
@@ -117,29 +118,36 @@ Let's run:
 python3 -m venv venv
 source venv/bin/activate
 pip install kafka-python lz4
-python lastTimeConsumed.py
+python lastTimeConsumed.py 
 ```
+
+Configuration note
+------------------
+
+The script defines a top-level constant in `lastTimeConsumed.py` named
+`IGNORE_CONFLUENT_CONTROL_CENTER_GROUPS`. When set to `True` (the
+default), consumer groups whose names start with `_confluent-controlcenter`
+are ignored when scanning for the last consumption time. Set this
+constant to `False` if you want the script to include those Control
+Center consumer groups in the results.
 
 You should get something like:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
-Requirement already satisfied: lz4 in ./venv/lib/python3.13/site-packages (4.4.5)
-
-[notice] A new release of pip is available: 24.3.1 -> 25.3
-[notice] To update, run: pip install --upgrade pip
+Requirement already satisfied: kafka-python in ./venv/lib/python3.14/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.14/site-packages (4.4.5)
 Fetching topics from Kafka cluster...
 
 Found 14 topics
 Fetching consumer groups...
-Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'schema-registry']
+Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
 __consumer_offsets             No consumer offset found       -                             
 __internal_confluent_only_broker_info No consumer offset found       -                             
 _confluent-alerts              No consumer offset found       -                             
-_confluent-command             2025-12-08 17:21:57.631000     _confluent-controlcenter-2-3-0-1-command
+_confluent-command             No consumer offset found       -                             
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No consumer offset found       -                             
 _confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No consumer offset found       -                             
 _confluent-telemetry-metrics   No consumer offset found       -                             
@@ -148,8 +156,8 @@ _schemas                       No consumer offset found       -
 connect-configs                No consumer offset found       -                             
 connect-offsets                No consumer offset found       -                             
 connect-status                 No consumer offset found       -                             
-customers                      No consumer offset found       -                             
-orders                         No consumer offset found       -                                        
+customers                      No consumer offset found       -                            
+orders                         No consumer offset found       -                            
 ```
 
 ### Create Console Consumers
@@ -166,45 +174,30 @@ kafka-avro-console-consumer --bootstrap-server localhost:9091 --topic customers 
 kafka-avro-console-consumer --bootstrap-server localhost:9091 --topic orders --from-beginning --group console-orders --property schema.registry.url=http://localhost:8081
 ```
 
-Now re-run the Python script to see the new consumer groups and their last consumption times:
+Now re-run the Python script to see the new consumer groups and their last consumption times (we are hiding the internal topics this time):
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install kafka-python lz4
-python lastTimeConsumed.py
+python lastTimeConsumed.py --hide-internal
 ```
 
 You should now see output similar to:
 
 ```
-Requirement already satisfied: kafka-python in ./venv/lib/python3.13/site-packages (2.3.0)
-Requirement already satisfied: lz4 in ./venv/lib/python3.13/site-packages (4.4.5)
-
-[notice] A new release of pip is available: 24.3.1 -> 25.3
-[notice] To update, run: pip install --upgrade pip
+Requirement already satisfied: kafka-python in ./venv/lib/python3.14/site-packages (2.3.0)
+Requirement already satisfied: lz4 in ./venv/lib/python3.14/site-packages (4.4.5)
 Fetching topics from Kafka cluster...
 
-Found 14 topics
+Found 2 topics
 Fetching consumer groups...
-Found 7 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', '_confluent-controlcenter-2-3-0-1', '_confluent-controlcenter-2-3-0-1-command', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
+Found 5 consumer groups: ['ConfluentTelemetryReporterSampler--8964530507091506048', 'connect-group', 'console-customers', 'console-orders', 'schema-registry']
 
 Topic                          Last Consumed                  Consumer Group                
 ------------------------------------------------------------------------------------------
-__consumer_offsets             No consumer offset found       -                             
-__internal_confluent_only_broker_info No consumer offset found       -                             
-_confluent-alerts              No consumer offset found       -                             
-_confluent-command             2025-12-08 17:21:57.631000     _confluent-controlcenter-2-3-0-1-command
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-changelog No consumer offset found       -                             
-_confluent-controlcenter-2-3-0-1-AlertHistoryStore-repartition No consumer offset found       -                             
-_confluent-telemetry-metrics   No consumer offset found       -                             
-_confluent_balancer_api_state  No consumer offset found       -                             
-_schemas                       No consumer offset found       -                             
-connect-configs                No consumer offset found       -                             
-connect-offsets                No consumer offset found       -                             
-connect-status                 No consumer offset found       -                             
-customers                      2025-12-08 17:28:52.258000     console-customers             
-orders                         2025-12-08 17:28:54.659000     console-orders                            
+customers                      2025-12-28 16:34:39.095000     console-customers             
+orders                         2025-12-28 16:34:36.492000     console-orders                
 ```
 
 The script will now display `console-customers` and `console-orders` as the consumer groups consuming these topics with their respective last consumption timestamps.

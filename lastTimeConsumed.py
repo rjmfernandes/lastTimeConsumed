@@ -6,7 +6,6 @@ from datetime import datetime
 
 from kafka import KafkaAdminClient, KafkaConsumer
 from kafka.errors import UnsupportedCodecError
-from kafka.structs import TopicPartition
 
 
 WARNINGS = []
@@ -17,6 +16,12 @@ def record_warning(message):
     if message not in WARNINGS:
         WARNINGS.append(message)
     return message
+
+
+# When True, consumer groups originating from Confluent Control Center
+# (prefix `_confluent-controlcenter`) will be ignored when scanning
+# for last consumption times. Change to False to include them.
+IGNORE_CONFLUENT_CONTROL_CENTER_GROUPS = True
 
 # Force-enable LZ4 support if the library is available (helps when kafka-python mis-detects).
 HAS_LZ4 = False
@@ -44,6 +49,14 @@ def get_topics(admin_client, include_internal=True):
     topics = admin_client.list_topics()
     if not include_internal:
         topics = [t for t in topics if not t.startswith("_")]
+        topics = [t for t in topics if not t.startswith("_")]
+        topics = [t for t in topics if "-changelog" not in t]
+        topics = [t for t in topics if "-repartition" not in t]
+        topics = [t for t in topics if "confluent-" not in t]
+        topics = [t for t in topics if "connect-" not in t]
+        topics = [t for t in topics if "replicator-" not in t]
+        topics = [t for t in topics if "syslog_" not in t]
+        topics = [t for t in topics if "-processing-log" not in t]
     return sorted(topics)
 
 
@@ -68,6 +81,12 @@ def get_consumer_groups(admin_client):
     except Exception as exc:
         print(f"Warning: failed to list consumer groups: {exc}", file=sys.stderr)
         record_warning(f"Failed to list consumer groups: {exc}")
+
+    # Optionally ignore Confluent Control Center internal consumer groups
+    if IGNORE_CONFLUENT_CONTROL_CENTER_GROUPS:
+        consumer_groups = [
+            g for g in consumer_groups if not g.startswith("_confluent-controlcenter")
+        ]
 
     return sorted(list(set(consumer_groups)))
 

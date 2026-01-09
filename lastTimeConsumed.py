@@ -7,7 +7,6 @@ from datetime import datetime
 from kafka import KafkaAdminClient, KafkaConsumer  # type: ignore
 from kafka.errors import UnsupportedCodecError  # type: ignore
 
-
 WARNINGS = []
 
 
@@ -22,6 +21,7 @@ def record_warning(message):
 # (prefix `_confluent-controlcenter`) will be ignored when scanning
 # for last consumption times. Change to False to include them.
 IGNORE_CONFLUENT_CONTROL_CENTER_GROUPS = True
+
 
 # Force-enable LZ4 support if the library is available (helps when kafka-python mis-detects).
 HAS_LZ4 = False
@@ -43,8 +43,10 @@ if not HAS_LZ4:
     )
     record_warning("Could not enable LZ4 support (likely missing lz4 library).")
 
+# Force-enable Snappy support if the library is available.
+HAS_SNAPPY = False
 try:
-    import snappy as _snappy  # python-snappy
+    import snappy as _snappy  # type: ignore  # python-snappy
     import kafka.codec as _kafka_codec  # type: ignore
 
     _kafka_codec.snappy = _snappy
@@ -63,11 +65,11 @@ if not HAS_SNAPPY:
         "Could not enable Snappy support (likely missing python-snappy library)."
     )
 
+
 def get_topics(admin_client, include_internal=True):
     """Get all topics from the Kafka cluster."""
     topics = admin_client.list_topics()
     if not include_internal:
-        topics = [t for t in topics if not t.startswith("_")]
         topics = [t for t in topics if not t.startswith("_")]
         topics = [t for t in topics if "-changelog" not in t]
         topics = [t for t in topics if "-repartition" not in t]
@@ -85,7 +87,11 @@ def normalize_consumer_groups(groups_result):
 
 
 def extract_group_id(group_info):
-    return str(group_info[0]).strip()
+    # kafka-python sometimes returns tuples, sometimes objects depending on version
+    try:
+        return str(group_info[0]).strip()
+    except Exception:
+        return str(group_info).strip()
 
 
 def get_consumer_groups(admin_client):
@@ -111,8 +117,47 @@ def get_consumer_groups(admin_client):
 
 
 def fetch_timestamp_for_offset(consumer, tp, offset):
-    """Return datetime for the message at the given offset (offset must exist)."""
-    # Try the target offset and a few before it in case of corruption/failure
+    """
+    Best-effort: return datetime for the first message at/after `offset`.
+
+    Handles:
+      - retention (offset older than beginning -> short-circuit)
+      - compaction/gaps (exact offset may not exist -> accept first >= offset)
+      - slow fetch (poll for a few seconds instead of a single 1s shot)
+
+    Returns:
+      datetime or None
+    """
+    if offset is None or offset < 0:
+        return None
+
+    # Bounds check: retention / truncation
+    try:
+        beginning = consumer.beginning_offsets([tp]).get(tp)
+        end = consumer.end_offsets([tp]).get(tp)
+    except Exception as exc:
+        beginning, end = None, None
+        record_warning(
+            f"Failed to fetch beginning/end offsets for {tp.topic} partition {tp.partition}: {exc}"
+        )
+
+    if beginning is not None and offset < beginning:
+        record_warning(
+            f"{tp.topic} partition {tp.partition}: offset {offset} is older than retention "
+            f"(earliest available offset is {beginning})."
+        )
+        return None
+
+    if end is not None and offset >= end:
+        # Clamp to last existing record if possible
+        if end <= 0:
+            record_warning(
+                f"{tp.topic} partition {tp.partition}: topic appears empty (end offset {end})."
+            )
+            return None
+        offset = end - 1
+
+    # Try the target offset and a few before it
     max_retries = 3
 
     for retry in range(max_retries):
@@ -121,57 +166,73 @@ def fetch_timestamp_for_offset(consumer, tp, offset):
             break
 
         consumer.assign([tp])
-        consumer.seek(tp, current_offset)
-
         try:
-            # Poll for the message instead of using next() for better reliability
-            msg_map = consumer.poll(timeout_ms=1000, max_records=1)
-            msg = msg_map.get(tp, [None])[0]
+            consumer.seek(tp, current_offset)
 
-            if msg and msg.timestamp is not None:
-                return datetime.fromtimestamp(msg.timestamp / 1000)
-            else:
-                warning_msg = f"Could not fetch message/timestamp for {tp.topic} partition {tp.partition} at offset {current_offset}"
-                record_warning(warning_msg)
+            # Poll in a loop (not just one 1-second shot)
+            total_wait_ms = 5000
+            waited = 0
+            msg = None
+
+            while waited < total_wait_ms:
+                msg_map = consumer.poll(timeout_ms=1000, max_records=1)
+                recs = msg_map.get(tp) or []
+                if recs:
+                    msg = recs[0]
+                    break
+                waited += 1000
+
+            if not msg:
+                record_warning(
+                    f"Could not fetch message/timestamp for {tp.topic} partition {tp.partition} "
+                    f"at/after offset {current_offset} (no records after {total_wait_ms}ms)"
+                )
                 continue
 
+            # Accept record at/after the requested offset (important for compaction gaps)
+            if msg.timestamp is not None:
+                return datetime.fromtimestamp(msg.timestamp / 1000)
+
+            record_warning(
+                f"Fetched record for {tp.topic} partition {tp.partition} at offset {msg.offset} "
+                f"but it had no timestamp."
+            )
+            continue
+
         except UnsupportedCodecError as exc:
-            # Accumulate error for later display and surface the codec error details
             warning_msg = (
                 f"Topic '{tp.topic}' uses a compression codec that couldn't be decoded ({exc}). "
                 "Install the matching codec (e.g., lz4, snappy) and retry. Skipping timestamp extraction."
             )
             record_warning(warning_msg)
-            return None  # Fail immediately on codec error
+            return None
 
         except Exception as exc:
-            # Log specific message corruption/read errors, then try the next preceding offset
-            warning_msg = f"Failed to fetch message for {tp} offset {current_offset}: {exc}. Trying previous offset..."
-            record_warning(warning_msg)
-            continue  # Try the next loop iteration (previous offset)
+            # Covers auth failures, timeouts, out-of-range, etc. without brittle imports
+            record_warning(
+                f"Failed to fetch message for {tp.topic} partition {tp.partition} offset {current_offset}: {exc}. "
+                "Trying previous offset..."
+            )
+            continue
 
-    # If all retries fail, record a warning and return None
-    warning_msg = f"Could not find message/timestamp for {tp.topic} partition {tp.partition} at offset {offset}"
-    record_warning(warning_msg)
+    record_warning(
+        f"Could not find message/timestamp for {tp.topic} partition {tp.partition} near offset {offset}"
+    )
     return None
 
 
-def compute_last_consumption_for_topics(
-    admin_client, consumer, topics, consumer_groups
-):
+def compute_last_consumption_for_topics(admin_client, consumer, topics, consumer_groups):
     """Compute last consumption timestamp and group for each topic efficiently.
 
     Strategy:
-    - Iterate each consumer group once and call `list_consumer_group_offsets(group)`
-      a single time per group.
-    - For each TopicPartition offset encountered, fetch the message timestamp
-      only once and cache it. This avoids repeating the same seek/poll for the
-      same (topic, partition, offset) combination when multiple topics/groups
-      reference the same partition offsets.
-    - Build a mapping: topic -> (latest_timestamp, consumer_group)
+    - Iterate each consumer group once and call `list_consumer_group_offsets(group)` once per group.
+    - For each TopicPartition offset encountered, fetch the message timestamp only once and cache it.
+    - Track whether *any* offset was seen for each topic, so we can distinguish:
+        - truly no offsets
+        - offsets exist but timestamp couldn't be fetched (retention/ACL/codec/etc.)
     """
-    # Prepare results map with None default
-    results = {t: (None, None) for t in topics}
+    # results: topic -> (latest_timestamp, consumer_group, saw_any_offset)
+    results = {t: (None, None, False) for t in topics}
 
     # Cache timestamps for (topic, partition, offset)
     timestamp_cache = {}
@@ -180,8 +241,7 @@ def compute_last_consumption_for_topics(
         try:
             group_offsets = admin_client.list_consumer_group_offsets(group)
         except Exception as exc:
-            warning_msg = f"Failed to fetch offsets for group {group}: {exc}"
-            record_warning(warning_msg)
+            record_warning(f"Failed to fetch offsets for group {group}: {exc}")
             continue
 
         for tp, offset_data in group_offsets.items():
@@ -189,6 +249,10 @@ def compute_last_consumption_for_topics(
                 continue
             if offset_data.offset is None or offset_data.offset <= 0:
                 continue
+
+            # Mark that we saw an offset for this topic (even if later timestamp fetch fails)
+            cur_ts, cur_group, _ = results[tp.topic]
+            results[tp.topic] = (cur_ts, cur_group, True)
 
             target_offset = offset_data.offset - 1
             cache_key = (tp.topic, tp.partition, target_offset)
@@ -202,48 +266,15 @@ def compute_last_consumption_for_topics(
             if not ts:
                 continue
 
-            current_ts, current_group = results[tp.topic]
+            current_ts, current_group, saw_offset = results[tp.topic]
             if current_ts is None or ts > current_ts:
-                results[tp.topic] = (ts, group)
+                results[tp.topic] = (ts, group, saw_offset)
 
     return results
 
 
-def get_last_consumption_time_and_group(admin_client, consumer, topic, consumer_groups):
-    """Get the last consumption time and consumer group for a topic."""
-    last_consumption = None
-
-    for group in consumer_groups:
-        try:
-            group_offsets = admin_client.list_consumer_group_offsets(group)
-        except Exception as exc:
-            warning_msg = f"Failed to fetch offsets for group {group}: {exc}"
-            record_warning(warning_msg)
-            continue
-
-        group_last_times = []
-        for tp, offset_data in group_offsets.items():
-            if tp.topic != topic:
-                continue
-            if offset_data.offset is None or offset_data.offset <= 0:
-                continue
-
-            ts = fetch_timestamp_for_offset(consumer, tp, offset_data.offset - 1)
-            if ts:
-                group_last_times.append((ts, group))
-
-        if group_last_times:
-            latest = max(group_last_times, key=lambda x: x[0])
-            if last_consumption is None or latest[0] > last_consumption[0]:
-                last_consumption = latest
-
-    return last_consumption if last_consumption else (None, None)
-
-
 def build_arg_parser():
-    parser = argparse.ArgumentParser(
-        description="List last consumed time per Kafka topic."
-    )
+    parser = argparse.ArgumentParser(description="List last consumed time per Kafka topic.")
     parser.add_argument(
         "--bootstrap-servers",
         default="localhost:9091",
@@ -285,8 +316,9 @@ def main():
     print("Fetching consumer groups...")
     consumer_groups = get_consumer_groups(admin_client)
     print(f"Found {len(consumer_groups)} consumer groups: {consumer_groups}\n")
-    print(f"{'Topic':<30} {'Last Consumed':<30} {'Consumer Group':<30}")
-    print("-" * 90)
+
+    print(f"{'Topic':<60} {'Last Consumed':<30} {'Consumer Group':<30}")
+    print("-" * 120)
 
     # Compute last consumption for all topics in a single efficient pass
     topic_last_map = compute_last_consumption_for_topics(
@@ -294,17 +326,20 @@ def main():
     )
 
     for topic in topics:
-        last_time, group = topic_last_map.get(topic, (None, None))
+        last_time, group, saw_offset = topic_last_map.get(topic, (None, None, False))
         if last_time:
-            print(f"{topic:<30} {str(last_time):<30} {group:<30}")
+            print(f"{topic:<60} {str(last_time):<30} {group:<30}")
         else:
-            print(f"{topic:<30} {'No consumer offset found':<30} {'-':<30}")
+            if saw_offset:
+                print(f"{topic:<60} {'Offset found, timestamp unavailable':<30} {'-':<30}")
+            else:
+                print(f"{topic:<60} {'No consumer offset found':<30} {'-':<30}")
 
     consumer.close()
     admin_client.close()
 
     if WARNINGS:
-        print("\n" + "=" * 90, file=sys.stderr)
+        print("\n" + "=" * 120, file=sys.stderr)
         print(f"Warnings ({len(WARNINGS)}):", file=sys.stderr)
         for i, warning in enumerate(WARNINGS, 1):
             print(f"{i}. {warning}", file=sys.stderr)
